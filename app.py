@@ -48,6 +48,7 @@ DEFAULT_STATE: dict[str, Any] = {
             "progress": 100,
             "createdAt": int(time.time()),
             "updatedAt": int(time.time()),
+            "events": [{"time": int(time.time()), "text": "задача завершена", "progress": 100}],
         },
         {
             "id": "task-miniapp-mvp",
@@ -58,6 +59,7 @@ DEFAULT_STATE: dict[str, Any] = {
             "progress": 52,
             "createdAt": int(time.time()),
             "updatedAt": int(time.time()),
+            "events": [{"time": int(time.time()), "text": "интерфейс управления задачами в работе", "progress": 52}],
         },
     ],
     "approvals": [
@@ -224,6 +226,30 @@ def route_openclaw(message: str) -> dict[str, Any]:
     }
 
 
+def clamp_progress(value: Any) -> int:
+    try:
+        return max(0, min(100, int(value)))
+    except Exception:
+        return 0
+
+
+def add_task_event(task: dict[str, Any], text: str, progress: int | None = None) -> None:
+    pct = clamp_progress(task.get("progress") if progress is None else progress)
+    task.setdefault("events", []).insert(0, {"time": now(), "text": text[:240], "progress": pct})
+    task["events"] = task["events"][:8]
+    task["updatedAt"] = now()
+
+
+def normalize_tasks(state: dict[str, Any]) -> None:
+    for task in state.setdefault("tasks", []):
+        status = task.get("status") or "active"
+        task["status"] = status
+        task["progress"] = 100 if status == "done" else clamp_progress(task.get("progress", 0))
+        task.setdefault("updatedAt", task.get("createdAt", now()))
+        if not task.get("events"):
+            add_task_event(task, "состояние задачи загружено", task.get("progress", 0))
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version = "ArkestratorMiniApp/0.1"
 
@@ -266,7 +292,10 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/tasks":
             # Read endpoints stay visible for the dashboard shell and public preview.
             # Mutating endpoints below still require verified Telegram initData when a bot token is configured.
-            return json_response(self, {"ok": True, "tasks": read_state().get("tasks", [])})
+            state = read_state()
+            normalize_tasks(state)
+            write_state(state)
+            return json_response(self, {"ok": True, "tasks": state.get("tasks", [])})
         if path == "/api/approvals":
             return json_response(self, {"ok": True, "approvals": read_state().get("approvals", [])})
         if path == "/api/results":
@@ -301,6 +330,7 @@ class Handler(BaseHTTPRequestHandler):
                 "progress": int(body.get("progress") or 8),
                 "createdAt": now(),
                 "updatedAt": now(),
+                "events": [{"time": now(), "text": "создано из Mini App", "progress": int(body.get("progress") or 8)}],
             }
             state.setdefault("tasks", []).insert(0, task)
             state.setdefault("results", []).insert(0, {"id": f"result-{now()}", "title": f"Задача создана: {task['title']}", "kind": "task", "createdAt": now()})
@@ -324,17 +354,43 @@ class Handler(BaseHTTPRequestHandler):
                 found["status"] = "active"
                 found["progress"] = 0
                 found["body"] = "Перезапущено Никитой из Mini App"
+                add_task_event(found, "Никита перезапустил задачу", 0)
             elif action == "cancel":
                 found["status"] = "cancelled"
                 found["progress"] = int(found.get("progress") or 0)
                 found["body"] = "Отменено Никитой из Mini App"
+                add_task_event(found, "Никита отменил задачу")
             elif action == "pause":
                 found["status"] = "paused"
+                add_task_event(found, "Никита поставил задачу на паузу")
             elif action == "resume":
                 found["status"] = "active"
                 found["progress"] = max(1, int(found.get("progress") or 1))
+                add_task_event(found, "Никита продолжил задачу")
             found["updatedAt"] = now()
             state.setdefault("results", []).insert(0, {"id": f"result-task-control-{now()}", "title": f"Задача {labels[action]}: {found['title']}", "kind": "task-control", "createdAt": now(), "taskId": task_id, "action": action})
+            write_state(state)
+            return json_response(self, {"ok": True, "task": found})
+
+        if path == "/api/tasks/progress":
+            task_id = str(body.get("id") or "")
+            found = None
+            for task in state.setdefault("tasks", []):
+                if task.get("id") == task_id:
+                    found = task
+                    break
+            if not found:
+                return json_response(self, {"ok": False, "error": "not-found"}, 404)
+            progress = clamp_progress(body.get("progress", found.get("progress", 0)))
+            found["progress"] = progress
+            if "status" in body:
+                found["status"] = str(body.get("status") or found.get("status") or "active")
+            elif progress >= 100:
+                found["status"] = "done"
+            note = str(body.get("note") or f"прогресс обновлён: {progress}%")
+            found["body"] = note[:500]
+            add_task_event(found, note, progress)
+            state.setdefault("results", []).insert(0, {"id": f"result-task-progress-{now()}", "title": f"Прогресс {progress}%: {found['title']}", "kind": "task-progress", "createdAt": now(), "taskId": task_id})
             write_state(state)
             return json_response(self, {"ok": True, "task": found})
 
@@ -342,12 +398,14 @@ class Handler(BaseHTTPRequestHandler):
             message = str(body.get("message") or "").strip()
             if not message:
                 return json_response(self, {"ok": False, "error": "empty-message"}, 400)
-            task = {"id": f"task-openclaw-{now()}", "title": message[:180], "body": "Передано Клешне через OpenClaw bridge", "executor": "kleshna", "status": "active", "createdAt": now()}
+            task = {"id": f"task-openclaw-{now()}", "title": message[:180], "body": "Передано Клешне через OpenClaw bridge", "executor": "kleshna", "status": "active", "progress": 15, "createdAt": now(), "updatedAt": now(), "events": [{"time": now(), "text": "передано Клешне", "progress": 15}]}
             state.setdefault("tasks", []).insert(0, task)
             write_state(state)
             result = route_openclaw(message)
             state = read_state()
             task["status"] = "done" if result.get("ok") else "blocked"
+            task["progress"] = 100 if result.get("ok") else 15
+            add_task_event(task, "Клешня вернула результат" if result.get("ok") else "Клешня вернула ошибку", task["progress"])
             for i, old in enumerate(state.get("tasks", [])):
                 if old.get("id") == task["id"]:
                     state["tasks"][i] = task
@@ -378,7 +436,7 @@ class Handler(BaseHTTPRequestHandler):
 
         if path == "/api/intervene":
             message = str(body.get("message") or "Никита вмешался в процесс").strip()
-            state.setdefault("tasks", []).insert(0, {"id": f"task-intervene-{now()}", "title": "Вмешательство Никиты", "body": message[:500], "executor": "hermes", "status": "active", "progress": 5, "createdAt": now(), "updatedAt": now()})
+            state.setdefault("tasks", []).insert(0, {"id": f"task-intervene-{now()}", "title": "Вмешательство Никиты", "body": message[:500], "executor": "hermes", "status": "active", "progress": 5, "createdAt": now(), "updatedAt": now(), "events": [{"time": now(), "text": "Никита вмешался в процесс", "progress": 5}]})
             for process in state.setdefault("processes", DEFAULT_STATE["processes"]):
                 if process.get("id") == "proc-decision":
                     process["status"] = "active"
