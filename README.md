@@ -14,7 +14,7 @@ Telegram Mini App / AI-пульт Никиты для связки Hermes ↔ Op
 
 ## Текущее состояние
 
-- `index.html` — premium mobile-first UI в стиле Linear/Raycast/modern Telegram Mini App.
+- `index.html` — светлый минималистичный mobile-first UI: инфографика, рабочие сценарии, анимации, быстрый пульт.
 - `app.py` — backend на Python stdlib без внешних зависимостей.
 - `manifest.webmanifest`, `sw.js`, `icon.svg` — PWA shell.
 - `start_public.sh` — локальный production-like запуск: backend + Cloudflare tunnel + автообновление Telegram Web App кнопки.
