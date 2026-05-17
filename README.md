@@ -16,6 +16,8 @@ Telegram Mini App / AI-пульт Никиты для связки Hermes ↔ Op
 
 - `index.html` — светлый минималистичный mobile-first UI в логике центра решений: Да/Нет/Вмешаться, голосовой режим, схема процесса, задачи, агенты и проверяемые итоги.
 - `ROADMAP_50.md` — дорожная карта из 50 задач до сильного рабочего приложения.
+- `PROGRESS_INTEGRATION.md` — как Hermes, Клешня, деплой и 3D-процессы пишут живой прогресс в нижний пульт.
+- `scripts/progress_update.py` — локальный инструмент для создания задач и обновления процентов/событий.
 - `app.py` — backend на Python stdlib без внешних зависимостей.
 - `manifest.webmanifest`, `sw.js`, `icon.svg` — PWA shell.
 - `start_public.sh` — локальный production-like запуск: backend + Cloudflare tunnel + автообновление Telegram Web App кнопки.

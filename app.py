@@ -14,6 +14,7 @@ import hmac
 import json
 import os
 import re
+import secrets
 import shlex
 import subprocess
 import time
@@ -31,6 +32,7 @@ STATIC_FILES = {
 }
 DATA_DIR = ROOT / "data"
 STATE_FILE = DATA_DIR / "state.json"
+INTERNAL_TOKEN_FILE = DATA_DIR / "internal_token"
 OPENCLAW_SESSION_ID = os.getenv("ARKESTRATOR_OPENCLAW_SESSION_ID", "3bd4f308-8e30-4bed-b9bb-04135e9f20a8")
 OPENCLAW_GROUP_ID = os.getenv("ARKESTRATOR_OPENCLAW_GROUP_ID", "-1003920075284")
 OWNER_ID = os.getenv("ARKESTRATOR_OWNER_ID", "7260915527")
@@ -136,6 +138,35 @@ def read_json_body(handler: BaseHTTPRequestHandler) -> dict[str, Any]:
     return json.loads(raw.decode("utf-8"))
 
 
+def internal_token() -> str:
+    configured = os.getenv("ARKESTRATOR_INTERNAL_TOKEN", "").strip()
+    if configured:
+        return configured
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    if INTERNAL_TOKEN_FILE.exists():
+        token = INTERNAL_TOKEN_FILE.read_text(encoding="utf-8").strip()
+        if token:
+            return token
+    token = secrets.token_urlsafe(32)
+    INTERNAL_TOKEN_FILE.write_text(token + "\n", encoding="utf-8")
+    try:
+        INTERNAL_TOKEN_FILE.chmod(0o600)
+    except Exception:
+        pass
+    return token
+
+
+def verify_internal_token(handler: BaseHTTPRequestHandler) -> bool:
+    received = handler.headers.get("X-Arkestrator-Internal-Token", "")
+    return bool(received) and hmac.compare_digest(received, internal_token())
+
+
+def require_write_auth(handler: BaseHTTPRequestHandler, path: str) -> tuple[bool, str]:
+    if path in {"/api/tasks", "/api/tasks/progress", "/api/tasks/control"} and verify_internal_token(handler):
+        return True, "internal-token"
+    return require_auth(handler)
+
+
 def verify_init_data(init_data: str) -> tuple[bool, str]:
     """Verify Telegram Mini App initData if bot token is configured.
 
@@ -233,9 +264,12 @@ def clamp_progress(value: Any) -> int:
         return 0
 
 
-def add_task_event(task: dict[str, Any], text: str, progress: int | None = None) -> None:
+def add_task_event(task: dict[str, Any], text: str, progress: int | None = None, source: str | None = None) -> None:
     pct = clamp_progress(task.get("progress") if progress is None else progress)
-    task.setdefault("events", []).insert(0, {"time": now(), "text": text[:240], "progress": pct})
+    event = {"time": now(), "text": text[:240], "progress": pct}
+    if source:
+        event["source"] = source[:40]
+    task.setdefault("events", []).insert(0, event)
     task["events"] = task["events"][:8]
     task["updatedAt"] = now()
 
@@ -307,7 +341,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:
         path = urllib.parse.urlparse(self.path).path
-        ok, _ = require_auth(self)
+        ok, _ = require_write_auth(self, path)
         if not ok:
             return
         try:
@@ -387,10 +421,12 @@ class Handler(BaseHTTPRequestHandler):
                 found["status"] = str(body.get("status") or found.get("status") or "active")
             elif progress >= 100:
                 found["status"] = "done"
+            source = str(body.get("source") or body.get("executor") or found.get("executor") or "hermes")
+            found["source"] = source[:40]
             note = str(body.get("note") or f"прогресс обновлён: {progress}%")
             found["body"] = note[:500]
-            add_task_event(found, note, progress)
-            state.setdefault("results", []).insert(0, {"id": f"result-task-progress-{now()}", "title": f"Прогресс {progress}%: {found['title']}", "kind": "task-progress", "createdAt": now(), "taskId": task_id})
+            add_task_event(found, note, progress, source)
+            state.setdefault("results", []).insert(0, {"id": f"result-task-progress-{now()}", "title": f"Прогресс {progress}%: {found['title']}", "kind": "task-progress", "createdAt": now(), "taskId": task_id, "source": source})
             write_state(state)
             return json_response(self, {"ok": True, "task": found})
 
@@ -469,6 +505,7 @@ class Handler(BaseHTTPRequestHandler):
 def main() -> None:
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     read_state()
+    internal_token()
     server = ThreadingHTTPServer(("127.0.0.1", PORT), Handler)
     print(f"Arkestrator Mini App MVP: http://127.0.0.1:{PORT}/")
     print(f"Static: {STATIC}")
