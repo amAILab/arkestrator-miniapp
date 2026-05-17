@@ -60,7 +60,7 @@ DEFAULT_STATE: dict[str, Any] = {
         {
             "id": "approval-demo-deploy",
             "title": "Демо: подтверждение опасного действия",
-            "risk": "deploy / публикация / удаление требуют явного OK",
+            "risk": "публикация / удаление требуют явного подтверждения",
             "status": "pending",
             "createdAt": int(time.time()),
         }
@@ -68,6 +68,13 @@ DEFAULT_STATE: dict[str, Any] = {
     "results": [
         {"id": "result-ui", "title": "Прототип UI создан", "url": "/", "kind": "file", "createdAt": int(time.time())}
     ],
+    "processes": [
+        {"id": "proc-intake", "title": "Входящая задача", "status": "done", "progress": 100, "note": "заявка или голос уже приняты"},
+        {"id": "proc-context", "title": "Контекст и источники", "status": "active", "progress": 68, "note": "собираю данные из задач, ботов и сайта"},
+        {"id": "proc-decision", "title": "Решение Никиты", "status": "waiting", "progress": 35, "note": "нужно Да / Нет / Вмешаться"},
+        {"id": "proc-result", "title": "Итог и проверка", "status": "queued", "progress": 12, "note": "ссылка, файл или отчёт появятся здесь"}
+    ],
+    "settings": {"voiceMode": False, "realtime": False},
 }
 
 
@@ -260,6 +267,9 @@ class Handler(BaseHTTPRequestHandler):
             return json_response(self, {"ok": True, "approvals": read_state().get("approvals", [])})
         if path == "/api/results":
             return json_response(self, {"ok": True, "results": read_state().get("results", [])})
+        if path == "/api/processes":
+            state = read_state()
+            return json_response(self, {"ok": True, "processes": state.get("processes", DEFAULT_STATE["processes"]), "settings": state.get("settings", DEFAULT_STATE["settings"])})
         return text_response(self, "Not found", 404)
 
     def do_POST(self) -> None:
@@ -302,15 +312,46 @@ class Handler(BaseHTTPRequestHandler):
             write_state(state)
             return json_response(self, {"ok": bool(result.get("ok")), "task": task, "route": result})
 
+        if path == "/api/approvals":
+            title = str(body.get("title") or body.get("message") or "").strip()
+            risk = str(body.get("risk") or "Нужно решение Никиты: да, нет или вмешаться")
+            if not title:
+                return json_response(self, {"ok": False, "error": "empty-title"}, 400)
+            approval = {"id": f"approval-{now()}", "title": title[:180], "risk": risk[:500], "status": "pending", "createdAt": now()}
+            state.setdefault("approvals", []).insert(0, approval)
+            state.setdefault("results", []).insert(0, {"id": f"result-approval-created-{now()}", "title": f"Решение добавлено: {approval['title']}", "kind": "approval", "createdAt": now()})
+            write_state(state)
+            return json_response(self, {"ok": True, "approval": approval})
+
+        if path == "/api/settings":
+            settings = state.setdefault("settings", {})
+            for key in ("voiceMode", "realtime"):
+                if key in body:
+                    settings[key] = bool(body.get(key))
+            state.setdefault("results", []).insert(0, {"id": f"result-settings-{now()}", "title": "Настройки пульта обновлены", "kind": "settings", "createdAt": now(), "settings": settings})
+            write_state(state)
+            return json_response(self, {"ok": True, "settings": settings})
+
+        if path == "/api/intervene":
+            message = str(body.get("message") or "Никита вмешался в процесс").strip()
+            state.setdefault("tasks", []).insert(0, {"id": f"task-intervene-{now()}", "title": "Вмешательство Никиты", "body": message[:500], "executor": "hermes", "status": "active", "createdAt": now()})
+            for process in state.setdefault("processes", DEFAULT_STATE["processes"]):
+                if process.get("id") == "proc-decision":
+                    process["status"] = "active"
+                    process["progress"] = 80
+                    process["note"] = message[:120]
+            write_state(state)
+            return json_response(self, {"ok": True})
+
         if path == "/api/approvals/resolve":
             approval_id = str(body.get("id") or "")
             action = str(body.get("action") or "")
-            if action not in {"allow_once", "deny"}:
+            if action not in {"allow_once", "deny", "intervene"}:
                 return json_response(self, {"ok": False, "error": "bad-action"}, 400)
             found = None
             for approval in state.get("approvals", []):
                 if approval.get("id") == approval_id:
-                    approval["status"] = "allowed" if action == "allow_once" else "denied"
+                    approval["status"] = "allowed" if action == "allow_once" else ("intervention" if action == "intervene" else "denied")
                     approval["resolvedAt"] = now()
                     found = approval
                     break

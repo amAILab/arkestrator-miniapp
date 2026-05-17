@@ -1,5 +1,5 @@
-const CACHE = 'arkestrator-v1';
-const CORE = ['/', '/index.html', '/manifest.webmanifest', '/icon.svg'];
+const CACHE = 'arkestrator-v6';
+const CORE = ['/manifest.webmanifest', '/icon.svg'];
 
 self.addEventListener('install', event => {
   event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(CORE)).catch(() => null));
@@ -13,12 +13,12 @@ self.addEventListener('activate', event => {
 
 self.addEventListener('fetch', event => {
   const url = new URL(event.request.url);
-  if (url.pathname.startsWith('/api/')) return;
+  if (url.pathname === '/' || url.pathname === '/index.html' || url.pathname.startsWith('/api/')) return;
   event.respondWith(
     fetch(event.request).then(response => {
       const copy = response.clone();
       caches.open(CACHE).then(cache => cache.put(event.request, copy)).catch(() => null);
       return response;
-    }).catch(() => caches.match(event.request).then(cached => cached || caches.match('/')))
+    }).catch(() => caches.match(event.request))
   );
 });
