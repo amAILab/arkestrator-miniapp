@@ -45,7 +45,9 @@ DEFAULT_STATE: dict[str, Any] = {
             "body": "automatic mode · проверено сообщением #208",
             "executor": "kleshna",
             "status": "done",
+            "progress": 100,
             "createdAt": int(time.time()),
+            "updatedAt": int(time.time()),
         },
         {
             "id": "task-miniapp-mvp",
@@ -53,7 +55,9 @@ DEFAULT_STATE: dict[str, Any] = {
             "body": "Локальный backend + API + UI",
             "executor": "hermes",
             "status": "active",
+            "progress": 52,
             "createdAt": int(time.time()),
+            "updatedAt": int(time.time()),
         },
     ],
     "approvals": [
@@ -288,11 +292,51 @@ class Handler(BaseHTTPRequestHandler):
             executor = str(body.get("executor") or "hermes")
             if not title:
                 return json_response(self, {"ok": False, "error": "empty-title"}, 400)
-            task = {"id": f"task-{now()}", "title": title[:180], "body": str(body.get("body") or "Создано из Mini App")[:500], "executor": executor, "status": "active", "createdAt": now()}
+            task = {
+                "id": f"task-{now()}",
+                "title": title[:180],
+                "body": str(body.get("body") or "Создано из Mini App")[:500],
+                "executor": executor,
+                "status": "active",
+                "progress": int(body.get("progress") or 8),
+                "createdAt": now(),
+                "updatedAt": now(),
+            }
             state.setdefault("tasks", []).insert(0, task)
             state.setdefault("results", []).insert(0, {"id": f"result-{now()}", "title": f"Задача создана: {task['title']}", "kind": "task", "createdAt": now()})
             write_state(state)
             return json_response(self, {"ok": True, "task": task})
+
+        if path == "/api/tasks/control":
+            task_id = str(body.get("id") or "")
+            action = str(body.get("action") or "")
+            if action not in {"restart", "cancel", "pause", "resume"}:
+                return json_response(self, {"ok": False, "error": "bad-action"}, 400)
+            found = None
+            for task in state.setdefault("tasks", []):
+                if task.get("id") == task_id:
+                    found = task
+                    break
+            if not found:
+                return json_response(self, {"ok": False, "error": "not-found"}, 404)
+            labels = {"restart": "перезапущена", "cancel": "отменена", "pause": "поставлена на паузу", "resume": "продолжена"}
+            if action == "restart":
+                found["status"] = "active"
+                found["progress"] = 0
+                found["body"] = "Перезапущено Никитой из Mini App"
+            elif action == "cancel":
+                found["status"] = "cancelled"
+                found["progress"] = int(found.get("progress") or 0)
+                found["body"] = "Отменено Никитой из Mini App"
+            elif action == "pause":
+                found["status"] = "paused"
+            elif action == "resume":
+                found["status"] = "active"
+                found["progress"] = max(1, int(found.get("progress") or 1))
+            found["updatedAt"] = now()
+            state.setdefault("results", []).insert(0, {"id": f"result-task-control-{now()}", "title": f"Задача {labels[action]}: {found['title']}", "kind": "task-control", "createdAt": now(), "taskId": task_id, "action": action})
+            write_state(state)
+            return json_response(self, {"ok": True, "task": found})
 
         if path == "/api/route/openclaw":
             message = str(body.get("message") or "").strip()
@@ -334,7 +378,7 @@ class Handler(BaseHTTPRequestHandler):
 
         if path == "/api/intervene":
             message = str(body.get("message") or "Никита вмешался в процесс").strip()
-            state.setdefault("tasks", []).insert(0, {"id": f"task-intervene-{now()}", "title": "Вмешательство Никиты", "body": message[:500], "executor": "hermes", "status": "active", "createdAt": now()})
+            state.setdefault("tasks", []).insert(0, {"id": f"task-intervene-{now()}", "title": "Вмешательство Никиты", "body": message[:500], "executor": "hermes", "status": "active", "progress": 5, "createdAt": now(), "updatedAt": now()})
             for process in state.setdefault("processes", DEFAULT_STATE["processes"]):
                 if process.get("id") == "proc-decision":
                     process["status"] = "active"
