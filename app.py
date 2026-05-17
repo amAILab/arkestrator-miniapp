@@ -24,6 +24,11 @@ from typing import Any
 
 ROOT = Path(__file__).resolve().parent
 STATIC = ROOT / "index.html"
+STATIC_FILES = {
+    "/manifest.webmanifest": (ROOT / "manifest.webmanifest", "application/manifest+json; charset=utf-8"),
+    "/sw.js": (ROOT / "sw.js", "application/javascript; charset=utf-8"),
+    "/icon.svg": (ROOT / "icon.svg", "image/svg+xml; charset=utf-8"),
+}
 DATA_DIR = ROOT / "data"
 STATE_FILE = DATA_DIR / "state.json"
 OPENCLAW_SESSION_ID = os.getenv("ARKESTRATOR_OPENCLAW_SESSION_ID", "3bd4f308-8e30-4bed-b9bb-04135e9f20a8")
@@ -221,6 +226,13 @@ class Handler(BaseHTTPRequestHandler):
                 return text_response(self, "index.html not found", 404)
             html = STATIC.read_text(encoding="utf-8")
             return text_response(self, html, 200, "text/html; charset=utf-8")
+        if path in STATIC_FILES:
+            file_path, content_type = STATIC_FILES[path]
+            if not file_path.exists():
+                return text_response(self, "asset not found", 404)
+            return text_response(self, file_path.read_text(encoding="utf-8"), 200, content_type)
+        if path in ("/healthz", "/api/health"):
+            return json_response(self, {"ok": True, "service": "arkestrator-miniapp", "time": now()})
         if path == "/api/status":
             ok, auth_mode = verify_init_data(self.headers.get("X-Telegram-Init-Data", ""))
             state = read_state()

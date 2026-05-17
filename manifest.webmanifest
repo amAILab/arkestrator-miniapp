@@ -1,0 +1,19 @@
+{
+  "name": "Аркестратор — AI-пульт Никиты",
+  "short_name": "Аркестратор",
+  "description": "Telegram Mini App для управления Геркулесом, Клешнёй, задачами, approvals и результатами STEP 3D Lab.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#07080b",
+  "theme_color": "#07080b",
+  "orientation": "portrait",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
