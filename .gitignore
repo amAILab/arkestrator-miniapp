@@ -1,0 +1,11 @@
+# Runtime data / logs
+data/
+logs/
+screenshots/
+*.log
+__pycache__/
+*.pyc
+.env
+
+# Local tunnel state
+current_url.txt
